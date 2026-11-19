@@ -39,6 +39,11 @@
   .linegrid { display: grid; grid-template-columns: 1fr 92px 74px; gap: 6px; margin-bottom: 6px; }
   details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
   #log { font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; max-height: 220px; overflow: auto; color: var(--muted); margin-top: 8px; }
+  #cam { width: 100%; border-radius: 10px; margin: 10px 0 6px; background: #000; max-height: 260px; object-fit: cover; }
+  #recent { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { width: auto; display: inline-flex; gap: 6px; align-items: center; padding: 7px 11px; border-radius: 999px; font-size: .85rem; font-weight: 600; background: transparent; color: var(--ink); border: 1.5px solid var(--line); }
+  .chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .chip .x { opacity: .55; font-weight: 400; }
   .banner { border-left: 4px solid var(--accent); padding: 10px 12px; background: var(--card); border-radius: 8px; margin-bottom: 12px; display: none; }
 </style>
 </head>
@@ -48,6 +53,26 @@
   <p class="sub">For Zhsunyco / WOLINK 3.5" BWRY e-paper tags (384 × 184). Works in Chrome on Android.</p>
 
   <div class="banner" id="nobt"></div>
+
+  <div class="card">
+    <h2>0 · Which tag</h2>
+    <div class="row">
+      <button id="scanBtn">Scan barcode</button>
+      <button class="secondary" id="anyTag">Any tag</button>
+    </div>
+    <div id="scanWrap" hidden>
+      <video id="cam" playsinline muted></video>
+      <button class="secondary" id="scanStop">Stop camera</button>
+    </div>
+    <label for="tagId">Tag number (from the barcode, e.g. 17400353)</label>
+    <div class="row">
+      <input type="text" id="tagId" inputmode="numeric" placeholder="Any tag" autocomplete="off">
+      <input type="text" id="tagNick" placeholder="Nickname (optional)" autocomplete="off">
+    </div>
+    <div id="recent"></div>
+    <label class="check"><input type="checkbox" id="stamp"> Print the tag number small in the corner</label>
+    <div class="status" id="tagStatus"></div>
+  </div>
 
   <div class="card">
     <h2>1 · Picture</h2>
@@ -281,6 +306,18 @@ function render() {
     for (let i = 0; i < W * H; i++) if (td[i * 4 + 3] > 110) codes[i] = nearest(td[i * 4], td[i * 4 + 1], td[i * 4 + 2]);
   }
 
+  const id = tagId();
+  if ($("stamp").checked && id) {
+    const sc = document.createElement("canvas"); sc.width = W; sc.height = H;
+    const s = sc.getContext("2d", { willReadFrequently: true });
+    s.font = "700 13px ui-monospace, monospace";
+    const tw = s.measureText(id).width;
+    s.fillStyle = "#fff"; s.fillRect(W - tw - 8, H - 17, tw + 8, 17);
+    s.fillStyle = "#000"; s.textBaseline = "bottom"; s.textAlign = "right"; s.fillText(id, W - 4, H - 2);
+    const sd = s.getImageData(0, 0, W, H).data;
+    for (let i = 0; i < W * H; i++) if (sd[i * 4 + 3] > 0) codes[i] = sd[i * 4] < 128 ? BLACK : WHITE;
+  }
+
   if ($("flip").checked) codes.reverse();   // 180° = reverse pixel order
 
   const out = pctx.createImageData(W, H);
@@ -310,9 +347,10 @@ async function sendToTag() {
     const payload = await compress(raw);
     log(`image ${raw.length} bytes → ${payload.length} compressed`);
 
-    setStatus("Pick your tag (name starts with WL)…");
+    const id = tagId();
+    setStatus(id ? `Looking for tag WL${id} — tap it when it appears…` : "Pick your tag (name starts with WL)…");
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: "WL" }, { services: [SERVICE] }],
+      filters: id ? [{ name: "WL" + id }] : [{ namePrefix: "WL" }, { services: [SERVICE] }],
       optionalServices: [SERVICE],
     });
     log("selected " + (device.name || device.id));
@@ -364,6 +402,8 @@ async function sendToTag() {
     await data.writeValueWithResponse(command(OP_REFRESH, payload.length));
     await done;
     setStatus("Done — the tag should now show your picture.", "ok");
+    const m = /^WL([0-9A-F]+)$/i.exec(device.name || "");
+    if (m) remember(m[1].toUpperCase(), $("tagNick").value.trim());
   } catch (e) {
     if (e && e.name === "NotFoundError") setStatus("No tag selected.", "warn");
     else { setStatus(e.message || String(e), "err"); log("error: " + (e.stack || e)); }
@@ -373,6 +413,92 @@ async function sendToTag() {
   }
 }
 $("send").addEventListener("click", sendToTag);
+
+// ---- Which tag: barcode scan, typed number, remembered tags ----
+// The tag's Bluetooth name is "WL" + the 8-digit number under its barcode.
+function normId(s) {
+  const a = String(s || "").toUpperCase().replace(/[^0-9A-F]/g, "");
+  return a.length > 8 ? a.slice(-8) : a;   // a scanned MAC (…17400353) keeps its last 8
+}
+function tagId() { return normId($("tagId").value); }
+
+function loadTags() { try { return JSON.parse(localStorage.getItem("wlTags") || "[]"); } catch { return []; } }
+function saveTags(t) { try { localStorage.setItem("wlTags", JSON.stringify(t)); } catch {} }
+function remember(id, nick) {
+  const tags = loadTags().filter(t => t.id !== id);
+  const old = loadTags().find(t => t.id === id);
+  tags.unshift({ id, nick: nick || (old && old.nick) || "" });
+  saveTags(tags.slice(0, 30)); drawRecent();
+}
+function drawRecent() {
+  const box = $("recent"); box.innerHTML = "";
+  const cur = tagId();
+  for (const t of loadTags()) {
+    const b = document.createElement("button");
+    b.className = "chip" + (t.id === cur ? " on" : "");
+    b.innerHTML = `<span></span><span class="x" title="Forget">✕</span>`;
+    b.firstChild.textContent = t.nick ? `${t.nick} · ${t.id}` : t.id;
+    b.addEventListener("click", e => {
+      if (e.target.classList.contains("x")) { saveTags(loadTags().filter(x => x.id !== t.id)); drawRecent(); return; }
+      selectTag(t.id, t.nick);
+    });
+    box.appendChild(b);
+  }
+}
+function selectTag(id, nick) {
+  $("tagId").value = id; $("tagNick").value = nick || "";
+  $("tagStatus").textContent = id ? `Will only connect to tag WL${id}.` : "Will show every nearby tag.";
+  $("tagStatus").className = "status ok";
+  drawRecent(); render();
+}
+$("tagId").addEventListener("input", () => {
+  const id = tagId(), known = loadTags().find(t => t.id === id);
+  if (known) $("tagNick").value = known.nick;
+  $("tagStatus").textContent = id ? `Will only connect to tag WL${id}.` : "";
+  $("tagStatus").className = "status";
+  drawRecent();
+});
+$("tagNick").addEventListener("change", () => { const id = tagId(); if (id && loadTags().some(t => t.id === id)) remember(id, $("tagNick").value.trim()); });
+$("anyTag").addEventListener("click", () => selectTag("", ""));
+
+let camStream = null, scanning = false;
+async function stopScan() {
+  scanning = false;
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  camStream = null; $("scanWrap").hidden = true;
+}
+$("scanStop").addEventListener("click", stopScan);
+$("scanBtn").addEventListener("click", async () => {
+  const st = $("tagStatus");
+  if (!("BarcodeDetector" in window)) { st.textContent = "This browser can't scan barcodes — type the number under the barcode instead."; st.className = "status warn"; return; }
+  try {
+    const supported = await BarcodeDetector.getSupportedFormats();
+    const want = ["code_128", "code_39", "code_93", "codabar", "ean_13", "ean_8", "itf", "upc_a", "upc_e", "qr_code", "data_matrix"].filter(f => supported.includes(f));
+    const det = new BarcodeDetector({ formats: want });
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 } } });
+    const v = $("cam"); v.srcObject = camStream; await v.play();
+    $("scanWrap").hidden = false; scanning = true;
+    st.textContent = "Point the camera at the tag's barcode (fill the frame, hold steady)…"; st.className = "status";
+    while (scanning) {
+      const found = await det.detect(v).catch(() => []);
+      const hit = found.map(f => normId(f.rawValue)).find(x => x.length >= 6);
+      if (hit) {
+        if (navigator.vibrate) navigator.vibrate(80);
+        await stopScan();
+        const known = loadTags().find(t => t.id === hit);
+        selectTag(hit, known ? known.nick : "");
+        return;
+      }
+      await sleep(200);
+    }
+  } catch (e) {
+    await stopScan();
+    st.textContent = e.name === "NotAllowedError" ? "Camera permission was refused." : "Camera error: " + (e.message || e);
+    st.className = "status err";
+  }
+});
+$("stamp").addEventListener("change", render);
+drawRecent();
 
 // ---- capability checks ----
 (async () => {
