@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WL Tag Uploader</title>
+<style>
+  :root {
+    --bg: #f4f2ee; --card: #fff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e2dfd8;
+    --accent: #c0392b; --ok: #2e7d32; --warn: #b26a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #22221f; --ink: #f1efe9; --muted: #a09e97; --line: #3a3934; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 14px 48px; }
+  h1 { font-size: 1.3rem; margin: 4px 0 2px; }
+  .sub { color: var(--muted); font-size: .9rem; margin: 0 0 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  .card h2 { font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+  button, .filebtn {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px 14px; cursor: pointer;
+    background: var(--ink); color: var(--bg); width: 100%; display: block; text-align: center;
+  }
+  button.secondary, .filebtn { background: transparent; color: var(--ink); border: 1.5px solid var(--line); }
+  button:disabled { opacity: .4; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  label { font-size: .9rem; color: var(--muted); display: block; margin: 10px 0 4px; }
+  input[type=text], select { font: inherit; width: 100%; padding: 10px; border-radius: 9px; border: 1.5px solid var(--line); background: var(--bg); color: var(--ink); }
+  input[type=file] { display: none; }
+  .check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: .95rem; margin: 10px 0 0; }
+  .check input { width: 20px; height: 20px; }
+  #preview { width: 100%; image-rendering: pixelated; border-radius: 6px; border: 1px solid var(--line); background: #fff; display: block; }
+  .status { font-size: .95rem; margin-top: 10px; min-height: 1.4em; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--accent); } .status.warn { color: var(--warn); }
+  progress { width: 100%; height: 10px; margin-top: 8px; accent-color: var(--ink); }
+  .linegrid { display: grid; grid-template-columns: 1fr 92px 74px; gap: 6px; margin-bottom: 6px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  #log { font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; max-height: 220px; overflow: auto; color: var(--muted); margin-top: 8px; }
+  .banner { border-left: 4px solid var(--accent); padding: 10px 12px; background: var(--card); border-radius: 8px; margin-bottom: 12px; display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WL Tag Uploader</h1>
+  <p class="sub">For Zhsunyco / WOLINK 3.5" BWRY e-paper tags (384 × 184). Works in Chrome on Android.</p>
+
+  <div class="banner" id="nobt"></div>
+
+  <div class="card">
+    <h2>1 · Picture</h2>
+    <div class="row">
+      <label class="filebtn" for="file">Choose image</label>
+      <button class="secondary" id="clearImg">Clear image</button>
+    </div>
+    <input type="file" id="file" accept="image/*">
+    <div class="row">
+      <div>
+        <label for="fit">Fit</label>
+        <select id="fit">
+          <option value="cover">Fill (crop)</option>
+          <option value="contain">Fit (white bars)</option>
+          <option value="stretch">Stretch</option>
+        </select>
+      </div>
+      <div>
+        <label for="bg">Background</label>
+        <select id="bg">
+          <option value="#ffffff">White</option>
+          <option value="#000000">Black</option>
+          <option value="#ff0000">Red</option>
+          <option value="#ffff00">Yellow</option>
+        </select>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="dither" checked> Dither photos (smoother shading)</label>
+    <label class="check"><input type="checkbox" id="flip"> Rotate 180° (if it comes out upside down)</label>
+  </div>
+
+  <div class="card">
+    <h2>2 · Text (optional)</h2>
+    <div id="lines"></div>
+    <div class="row">
+      <div>
+        <label for="align">Align</label>
+        <select id="align"><option>center</option><option>left</option><option>right</option></select>
+      </div>
+      <div>
+        <label for="font">Font</label>
+        <select id="font">
+          <option value="system-ui, sans-serif">Sans</option>
+          <option value="Georgia, serif">Serif</option>
+          <option value="ui-monospace, monospace">Mono</option>
+        </select>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="bold" checked> Bold</label>
+  </div>
+
+  <div class="card">
+    <h2>3 · Preview (as the tag will show it)</h2>
+    <canvas id="preview" width="384" height="184"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>4 · Send</h2>
+    <button id="send">Connect &amp; send to tag</button>
+    <progress id="prog" value="0" max="100" hidden></progress>
+    <div class="status" id="status"></div>
+    <details>
+      <summary>Technical log</summary>
+      <div id="log"></div>
+    </details>
+  </div>
+</main>
+
+<script>
+"use strict";
+// ---- WOLINK protocol (ported from eigger/hass-ble-esl, MIT) ----
+const SERVICE = "30323032-4c53-4545-4c42-4b4e494c4f57";
+const DATA_CHAR = "31323032-4c53-4545-4c42-4b4e494c4f57";
+const AUTH_CHAR = "33323032-4c53-4545-4c42-4b4e494c4f57";
+const STATUS_CHAR = "34323032-4c53-4545-4c42-4b4e494c4f57";
+const AES_KEY_HEX = "9b609f28bc49e25729bd7b8df22b4420";
+const OP_WRITE_DATA = 0xA500, OP_REFRESH = 0xA502;
+const DEVICE_ERRORS = { 1: "display init error", 2: "display write error", 3: "decompression error", 4: "OTA error", 5: "unlock failed" };
+const W = 384, H = 184;              // what you see on the tag
+const ROTATION = 270;                 // preset "350": PIL rotate 270 (counter-clockwise), no mirror
+const CHUNK = 200;
+// Colour codes are the 2-bit pixel values.
+const BLACK = 0, WHITE = 1, YELLOW = 2, RED = 3;
+const PALETTE = [[BLACK, [0, 0, 0]], [WHITE, [255, 255, 255]], [YELLOW, [255, 255, 0]], [RED, [255, 0, 0]]];
+const CODE_RGB = { 0: [0, 0, 0], 1: [255, 255, 255], 2: [255, 255, 0], 3: [255, 0, 0] };
+
+function nearest(r, g, b) {
+  let best = 0, bd = Infinity;
+  for (const [code, [pr, pg, pb]] of PALETTE) {
+    const d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+    if (d < bd) { bd = d; best = code; }
+  }
+  return best;
+}
+
+// RGBA (W x H) -> colour codes, optional Floyd–Steinberg dithering.
+function quantize(rgba, w, h, dither) {
+  const codes = new Uint8Array(w * h);
+  if (!dither) {
+    for (let i = 0; i < w * h; i++) codes[i] = nearest(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]);
+    return codes;
+  }
+  const buf = new Float32Array(w * h * 3);
+  for (let i = 0; i < w * h; i++) { buf[i * 3] = rgba[i * 4]; buf[i * 3 + 1] = rgba[i * 4 + 1]; buf[i * 3 + 2] = rgba[i * 4 + 2]; }
+  const add = (x, y, e, f) => {
+    if (x < 0 || x >= w || y >= h) return;
+    const j = (y * w + x) * 3;
+    buf[j] += e[0] * f; buf[j + 1] += e[1] * f; buf[j + 2] += e[2] * f;
+  };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const j = (y * w + x) * 3;
+    const r = Math.min(255, Math.max(0, buf[j])), g = Math.min(255, Math.max(0, buf[j + 1])), b = Math.min(255, Math.max(0, buf[j + 2]));
+    const c = nearest(r, g, b); codes[y * w + x] = c;
+    const p = CODE_RGB[c], e = [r - p[0], g - p[1], b - p[2]];
+    add(x + 1, y, e, 7 / 16); add(x - 1, y + 1, e, 3 / 16); add(x, y + 1, e, 5 / 16); add(x + 1, y + 1, e, 1 / 16);
+  }
+  return codes;
+}
+
+// Codes in viewing orientation -> scan order (PIL Image.rotate(270, expand=True)), then 2bpp pack.
+function encode(codes) {
+  // rotate 270° CCW == 90° clockwise: new image is H wide, W tall; new(nx, ny) = old(ny, H-1-nx)
+  const sw = H, sh = W;
+  const rowBytes = Math.ceil(sw / 4);
+  const out = new Uint8Array(rowBytes * sh);
+  for (let ny = 0; ny < sh; ny++) {
+    for (let bx = 0; bx < rowBytes; bx++) {
+      let byte = 0;
+      for (let k = 0; k < 4; k++) {
+        const nx = bx * 4 + k;
+        const v = nx < sw ? codes[(H - 1 - nx) * W + ny] : WHITE;
+        byte = (byte << 2) | v;
+      }
+      out[ny * rowBytes + bx] = byte;
+    }
+  }
+  return out;
+}
+
+async function deflateRaw(bytes) {
+  const cs = new CompressionStream("deflate-raw");
+  const stream = new Blob([bytes]).stream().pipeThrough(cs);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+// Header A5 A6 <blocks> 02, then per 8 KiB block: index (1-based), u16 LE size, raw deflate.
+async function compress(raw) {
+  const BLOCK = 8192, parts = [];
+  for (let i = 0; i < raw.length; i += BLOCK) parts.push(await deflateRaw(raw.subarray(i, i + BLOCK)));
+  let len = 4; for (const p of parts) len += 3 + p.length;
+  const out = new Uint8Array(len);
+  out.set([0xA5, 0xA6, parts.length, 0x02]);
+  let o = 4;
+  parts.forEach((p, i) => { out[o] = i + 1; out[o + 1] = p.length & 0xff; out[o + 2] = p.length >> 8; out.set(p, o + 3); o += 3 + p.length; });
+  return out;
+}
+
+function command(op, u32, data) {
+  const out = new Uint8Array(6 + (data ? data.length : 0));
+  const dv = new DataView(out.buffer);
+  dv.setUint16(0, op, true); dv.setUint32(2, u32, true);
+  if (data) out.set(data, 6);
+  return out;
+}
+
+// AES-128-ECB via WebCrypto: CBC with a zero IV on one block equals ECB for that block.
+async function aesEcb(bytes) {
+  const keyBytes = new Uint8Array(AES_KEY_HEX.match(/../g).map(h => parseInt(h, 16)));
+  const key = await crypto.subtle.importKey("raw", keyBytes, "AES-CBC", false, ["encrypt"]);
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i += 16) {
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv: new Uint8Array(16) }, key, bytes.subarray(i, i + 16)));
+    out.set(ct.subarray(0, 16), i);
+  }
+  return out;
+}
+
+// ---- UI ----
+const $ = id => document.getElementById(id);
+const preview = $("preview"), pctx = preview.getContext("2d");
+const work = document.createElement("canvas"); work.width = W; work.height = H;
+const wctx = work.getContext("2d", { willReadFrequently: true });
+let img = null, codes = null;
+const hex = b => Array.from(b, x => x.toString(16).padStart(2, "0")).join(" ");
+function log(msg) { const el = $("log"); el.textContent += new Date().toLocaleTimeString() + "  " + msg + "\n"; el.scrollTop = el.scrollHeight; }
+function setStatus(msg, kind = "") { const el = $("status"); el.textContent = msg; el.className = "status " + kind; }
+
+const LINE_DEFAULTS = [["", 64, "#000000"], ["", 40, "#ff0000"], ["", 28, "#000000"]];
+LINE_DEFAULTS.forEach(([t, s, c], i) => {
+  const d = document.createElement("div"); d.className = "linegrid";
+  d.innerHTML = `<input type="text" placeholder="Line ${i + 1}" id="t${i}" value="${t}">
+    <select id="s${i}">${[20, 28, 40, 52, 64, 80, 100].map(v => `<option ${v === s ? "selected" : ""}>${v}</option>`).join("")}</select>
+    <select id="c${i}"><option value="#000000">Black</option><option value="#ff0000">Red</option><option value="#ffff00">Yellow</option><option value="#ffffff">White</option></select>`;
+  $("lines").appendChild(d);
+  d.querySelector(`#c${i}`).value = c;
+});
+
+function render() {
+  wctx.fillStyle = $("bg").value; wctx.fillRect(0, 0, W, H);
+  if (img) {
+    const fit = $("fit").value, iw = img.naturalWidth, ih = img.naturalHeight;
+    let dw = W, dh = H, dx = 0, dy = 0;
+    if (fit !== "stretch") {
+      const s = fit === "cover" ? Math.max(W / iw, H / ih) : Math.min(W / iw, H / ih);
+      dw = iw * s; dh = ih * s; dx = (W - dw) / 2; dy = (H - dh) / 2;
+    }
+    wctx.imageSmoothingQuality = "high";
+    wctx.drawImage(img, dx, dy, dw, dh);
+  }
+  const photo = wctx.getImageData(0, 0, W, H).data;
+  codes = quantize(photo, W, H, $("dither").checked && !!img);
+
+  // Text drawn crisp on top (no dithering), quantized separately.
+  const lines = [0, 1, 2].map(i => ({ t: $("t" + i).value, s: +$("s" + i).value, c: $("c" + i).value })).filter(l => l.t.trim());
+  if (lines.length) {
+    const tc = document.createElement("canvas"); tc.width = W; tc.height = H;
+    const t = tc.getContext("2d", { willReadFrequently: true });
+    const align = $("align").value, weight = $("bold").checked ? "700" : "400";
+    const total = lines.reduce((a, l) => a + l.s * 1.15, 0);
+    let y = (H - total) / 2;
+    t.textAlign = align; t.textBaseline = "top";
+    const x = align === "center" ? W / 2 : align === "left" ? 8 : W - 8;
+    for (const l of lines) {
+      let size = l.s;
+      t.font = `${weight} ${size}px ${$("font").value}`;
+      while (t.measureText(l.t).width > W - 16 && size > 10) { size -= 2; t.font = `${weight} ${size}px ${$("font").value}`; }
+      t.fillStyle = l.c; t.fillText(l.t, x, y + (l.s - size) / 2);
+      y += l.s * 1.15;
+    }
+    const td = t.getImageData(0, 0, W, H).data;
+    for (let i = 0; i < W * H; i++) if (td[i * 4 + 3] > 110) codes[i] = nearest(td[i * 4], td[i * 4 + 1], td[i * 4 + 2]);
+  }
+
+  if ($("flip").checked) codes.reverse();   // 180° = reverse pixel order
+
+  const out = pctx.createImageData(W, H);
+  const shown = $("flip").checked ? codes.slice().reverse() : codes;
+  for (let i = 0; i < W * H; i++) { const p = CODE_RGB[shown[i]]; out.data.set([p[0], p[1], p[2], 255], i * 4); }
+  pctx.putImageData(out, 0, 0);
+}
+
+$("file").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const im = new Image();
+  im.onload = () => { img = im; render(); };
+  im.src = URL.createObjectURL(f);
+});
+$("clearImg").addEventListener("click", () => { img = null; $("file").value = ""; render(); });
+document.querySelectorAll("select, input").forEach(el => el.addEventListener("input", render));
+
+// ---- BLE session ----
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function sendToTag() {
+  const btn = $("send"), prog = $("prog");
+  btn.disabled = true; prog.hidden = true; prog.value = 0;
+  let device;
+  try {
+    const raw = encode(codes);
+    const payload = await compress(raw);
+    log(`image ${raw.length} bytes → ${payload.length} compressed`);
+
+    setStatus("Pick your tag (name starts with WL)…");
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: "WL" }, { services: [SERVICE] }],
+      optionalServices: [SERVICE],
+    });
+    log("selected " + (device.name || device.id));
+    let dropped = false;
+    device.addEventListener("gattserverdisconnected", () => { dropped = true; log("disconnected"); });
+
+    setStatus("Connecting…");
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE);
+    const auth = await svc.getCharacteristic(AUTH_CHAR);
+    const data = await svc.getCharacteristic(DATA_CHAR);
+    const status = await svc.getCharacteristic(STATUS_CHAR);
+
+    setStatus("Unlocking…");
+    const nonce = new Uint8Array((await auth.readValue()).buffer);
+    log("nonce " + hex(nonce));
+    const answer = await aesEcb(nonce);
+    await auth.writeValueWithResponse(answer);
+    await sleep(500);
+    if (dropped || !device.gatt.connected) throw new Error("The tag rejected the unlock (it dropped the connection).");
+    log("unlocked");
+
+    let waiter = null, uploadError = 0;
+    status.addEventListener("characteristicvaluechanged", ev => {
+      const f = new Uint8Array(ev.target.value.buffer);
+      log("status " + hex(f));
+      const err = f.length >= 2 ? f[1] : 0;
+      if (waiter) waiter(f, err); else if (err) uploadError = err;
+    });
+    await status.startNotifications();
+
+    setStatus("Uploading…"); prog.hidden = false;
+    for (let off = 0; off < payload.length; off += CHUNK) {
+      if (dropped) throw new Error("Connection dropped during upload.");
+      if (uploadError) throw new Error(`Tag error ${uploadError}: ${DEVICE_ERRORS[uploadError] || "unknown"}`);
+      await data.writeValueWithResponse(command(OP_WRITE_DATA, off, payload.subarray(off, off + CHUNK)));
+      prog.value = Math.round(100 * Math.min(payload.length, off + CHUNK) / payload.length);
+    }
+    if (uploadError) throw new Error(`Tag error ${uploadError}: ${DEVICE_ERRORS[uploadError] || "unknown"}`);
+
+    setStatus("Refreshing the screen (about 15–30 s)…");
+    const done = new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("No 'done' signal from the tag after 60 s. It may still have updated.")), 60000);
+      waiter = (f, err) => {
+        if (err) { clearTimeout(t); reject(new Error(`Tag error ${err}: ${DEVICE_ERRORS[err] || "unknown"}`)); }
+        else if (f.length && (f[0] === 0x00 || f[0] === 0xFF)) { clearTimeout(t); resolve(); }
+      };
+    });
+    await data.writeValueWithResponse(command(OP_REFRESH, payload.length));
+    await done;
+    setStatus("Done — the tag should now show your picture.", "ok");
+  } catch (e) {
+    if (e && e.name === "NotFoundError") setStatus("No tag selected.", "warn");
+    else { setStatus(e.message || String(e), "err"); log("error: " + (e.stack || e)); }
+  } finally {
+    try { if (device && device.gatt.connected) device.gatt.disconnect(); } catch {}
+    btn.disabled = false;
+  }
+}
+$("send").addEventListener("click", sendToTag);
+
+// ---- capability checks ----
+(async () => {
+  const b = $("nobt");
+  let msg = "";
+  if (!("bluetooth" in navigator)) msg = "This browser has no Web Bluetooth. Open this page in Chrome on Android (not Firefox, and not the Claude app's viewer).";
+  else if (!window.isSecureContext) msg = "This page must be opened over https for Bluetooth to work.";
+  else if (navigator.bluetooth.getAvailability && !(await navigator.bluetooth.getAvailability())) msg = "Bluetooth looks switched off, or Chrome isn't allowed to use it.";
+  if (typeof CompressionStream === "undefined") msg = "This browser is too old (no CompressionStream). Update Chrome.";
+  if (msg) { b.textContent = msg; b.style.display = "block"; }
+})();
+
+// Export pieces for testing in Node.
+if (typeof module !== "undefined") module.exports = { encode, compress, quantize, command, aesEcb };
+render();
+</script>
+</body>
+</html>
