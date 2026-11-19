@@ -53,6 +53,11 @@
   <p class="sub">For Zhsunyco / WOLINK 3.5" BWRY e-paper tags (384 × 184). Works in Chrome on Android.</p>
 
   <div class="banner" id="nobt"></div>
+  <div class="card" id="extCard" hidden>
+    <h2>Sign from the Workbench</h2>
+    <div id="extInfo" style="margin-bottom:10px">A finished sign was handed over. Check the preview, then tap <b>Connect &amp; send</b>.</div>
+    <button class="secondary" id="extClear">Design here instead</button>
+  </div>
 
   <div class="card">
     <h2>0 · Which tag</h2>
@@ -255,7 +260,7 @@ const $ = id => document.getElementById(id);
 const preview = $("preview"), pctx = preview.getContext("2d");
 const work = document.createElement("canvas"); work.width = W; work.height = H;
 const wctx = work.getContext("2d", { willReadFrequently: true });
-let img = null, codes = null;
+let img = null, codes = null, ext = null;   // ext: a finished sign handed over in the link (from the Workbench)
 const hex = b => Array.from(b, x => x.toString(16).padStart(2, "0")).join(" ");
 function log(msg) { const el = $("log"); el.textContent += new Date().toLocaleTimeString() + "  " + msg + "\n"; el.scrollTop = el.scrollHeight; }
 function setStatus(msg, kind = "") { const el = $("status"); el.textContent = msg; el.className = "status " + kind; }
@@ -271,6 +276,7 @@ LINE_DEFAULTS.forEach(([t, s, c], i) => {
 });
 
 function render() {
+  if (ext) codes = ext.slice(); else {
   wctx.fillStyle = $("bg").value; wctx.fillRect(0, 0, W, H);
   if (img) {
     const fit = $("fit").value, iw = img.naturalWidth, ih = img.naturalHeight;
@@ -304,6 +310,7 @@ function render() {
     }
     const td = t.getImageData(0, 0, W, H).data;
     for (let i = 0; i < W * H; i++) if (td[i * 4 + 3] > 110) codes[i] = nearest(td[i * 4], td[i * 4 + 1], td[i * 4 + 2]);
+  }
   }
 
   const id = tagId();
@@ -499,6 +506,50 @@ $("scanBtn").addEventListener("click", async () => {
 });
 $("stamp").addEventListener("change", render);
 drawRecent();
+
+// ---- Signs handed over in the link: #s=<sign>&t=<tag number>&n=<label> ----
+// <sign> is base64url of raw-deflated 2-bit colour codes, 384 × 184 in viewing order,
+// 4 pixels per byte, first pixel in the top bits (black 0, white 1, yellow 2, red 3).
+function b64urlBytes(s) {
+  const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
+}
+async function inflateRaw(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+function showExt(on, label) {
+  $("extCard").hidden = !on;
+  $("file").closest(".card").hidden = on;
+  $("lines").closest(".card").hidden = on;
+  if (on) $("extInfo").innerHTML = (label ? "<b></b> is loaded. " : "A finished sign is loaded. ") + "Check the preview, then tap <b>Connect &amp; send</b>.";
+  if (on && label) $("extInfo").querySelector("b").textContent = label;
+}
+async function loadFromHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const s = p.get("s");
+  if (p.get("t")) { const id = normId(p.get("t")); const k = loadTags().find(t => t.id === id); selectTag(id, k ? k.nick : ""); }
+  if (!s) return;
+  try {
+    const packed = await inflateRaw(b64urlBytes(s));
+    if (packed.length !== W * H / 4) throw new Error("wrong size " + packed.length);
+    const c = new Uint8Array(W * H);
+    for (let i = 0; i < c.length; i++) c[i] = (packed[i >> 2] >> (6 - 2 * (i & 3))) & 3;
+    ext = c; showExt(true, p.get("n") || "");
+    log("sign loaded from link");
+  } catch (e) {
+    ext = null; showExt(false);
+    setStatus("The sign in this link couldn't be read (" + e.message + "). Send it from the Workbench again.", "err");
+  }
+  render();
+}
+$("extClear").addEventListener("click", () => {
+  ext = null; showExt(false);
+  try { history.replaceState(null, "", location.pathname + location.search); } catch {}
+  render();
+});
+window.addEventListener("hashchange", loadFromHash);
+loadFromHash();
 
 // ---- capability checks ----
 (async () => {
